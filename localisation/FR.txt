@@ -1,0 +1,61 @@
+[console]
+title = Console
+debug_label = DEBUG :
+info_label = INFO :
+clear_btn = Effacer
+
+[default]
+en = English
+fr = Francais
+zh_s = 简体中文
+
+[demo]
+btn.border.danger = DANGER
+btn.border.none = AUCUN
+btn.border.notice = AVIS
+btn.border.save = ENREGISTRER
+btn.checkable = ACTIVABLE
+btn.disabled = DESACTIVE
+btn.icon = ICONE
+btn.light.danger = DANGER
+btn.light.none = AUCUN
+btn.light.notice = AVIS
+btn.light.save = ENREGISTRER
+btn.normal.danger = DANGER
+btn.normal.none = AUCUN
+btn.normal.notice = AVIS
+btn.normal.save = ENREGISTRER
+btn.override = PRIORITAIRE
+btn_cancel = Annuler toutes les taches en cours et en file d'attente
+btn_group = Demonstration de la fabrique setButton (matrice type x spec)
+btn_submit = Soumettre 5 taches
+editable_label = Demo editable :
+export_btn = Exporter le modele de traduction
+fruit.apple = Pomme
+fruit.banana = Banane
+fruit.cherry = Cerise
+fruit.dragon = Fruit du dragon
+fruit.elderberry = Sureau
+fruit.fig = Figue
+fruit.grape = Raisin
+lang_label = Langue :
+slots_group = Etat des slots (barre de progression visuelle, reflete toutes les taches concurrentes)
+window_title = Demo LAVI_SDK
+check.dark = Mode sombre
+check.notify = Activer les notifications
+fruit_label = Fruit :
+misc_group = Composants divers (WheelSelector / SliderSwitch / TagInput / CheckboxItem)
+size.l = Grand
+size.m = Moyen
+size.s = Petit
+tag.placeholder = Appuyez sur Entree pour ajouter une etiquette
+wheel.apple = Pomme
+wheel.banana = Banane
+wheel.cherry = Cerise
+
+[progress]
+state.idle = Inactif
+state.running = En cours
+state.failed = Échec
+state.success = Succès
+

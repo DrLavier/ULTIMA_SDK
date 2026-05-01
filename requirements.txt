@@ -1,0 +1,13 @@
+# Core runtime dependencies
+PyQt6
+loguru
+
+# Optional data format support
+# pyyaml
+# pandas
+# tomli; python_version < "3.11"
+# tomli_w
+
+# Optional backend engines used by some pandas formats
+# openpyxl
+# pyarrow

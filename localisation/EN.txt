@@ -1,0 +1,58 @@
+[console]
+title = Console
+debug_label = DEBUG:
+info_label = INFO:
+clear_btn = Clear
+
+[default]
+en = English
+fr = Francais
+zh_s = 简体中文
+
+[demo]
+btn.border.danger = DANGER
+btn.border.none = NONE
+btn.border.notice = NOTICE
+btn.border.save = SAVE
+btn.checkable = CHECKABLE
+btn.disabled = DISABLED
+btn.icon = ICON
+btn.light.danger = DANGER
+btn.light.none = NONE
+btn.light.notice = NOTICE
+btn.light.save = SAVE
+btn.normal.danger = DANGER
+btn.normal.none = NONE
+btn.normal.notice = NOTICE
+btn.normal.save = SAVE
+btn.override = OVERRIDE
+btn_cancel = Cancel all running and queued tasks
+btn_group = setButton factory showcase (kind x spec matrix)
+btn_submit = Submit 5 tasks
+editable_label = Editable demo:
+export_btn = Export Translation Template
+fruit.apple = Apple
+fruit.banana = Banana
+fruit.cherry = Cherry
+fruit.dragon = Dragonfruit
+fruit.elderberry = Elderberry
+fruit.fig = Fig
+fruit.grape = Grape
+lang_label = Language:
+slots_group = Slot status (visual progress bar, reflects all concurrent tasks)
+window_title = LAVI_SDK Demo
+check.dark = Dark mode
+check.notify = Enable notifications
+fruit_label = Fruit:
+misc_group = Misc components (WheelSelector / SliderSwitch / TagInput / CheckboxItem)
+size.l = Large
+size.m = Medium
+size.s = Small
+tag.placeholder = Press Enter to add a tag
+wheel.apple = Apple
+wheel.banana = Banana
+wheel.cherry = Cherry
+
+[progress]
+state.idle = Idle
+state.running = Running

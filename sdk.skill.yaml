@@ -1,0 +1,747 @@
+name: ultima_sdk
+version: "1.1"
+purpose: >
+  PyQt6 desktop application infrastructure (single package, 3 modules). Provides:
+  cross-thread logging hub + cmd console, atomic file I/O
+  (INI/JSON/YAML/TOML/pickle/parquet/xlsx/csv/text/bytes), ini theme/font-size config,
+  resource lookup (external + bundled), uncaught exception routing, i18n with three-tier
+  fallback, N-slot concurrent tasks, themed Qt widget family (button/label/combo/progress
+  bar/switch/wheel/tag input/checkbox/group box).
+  Suitable for: scraping panels, batch GUIs, ops tools, any Qt desktop app with background
+  task progress.
+
+# ============================================================================
+# 0. Core rules (agent must read)
+# ============================================================================
+rules: |
+  - Sole import entry point: from ULTIMA_SDK import X. Never use
+    from ULTIMA_SDK.sys import ... / from ULTIMA_SDK.ui import ...; only refer to
+    __all__ in __init__.py.
+  - sdk.ini reads/writes always go through Config; on-disk file I/O always goes through
+    DataManager; path constants always come from Paths. Business code must NOT call
+    open() / Path(...) / ConfigParser() directly.
+  - Cross-thread communication only via pyqtSignal (LogSignal / TaskSignal); calling
+    log_* directly from a child thread is safe.
+  - Inside Task.run, use self.sleep(s) for blocking; time.sleep is non-interruptible
+    and breaks cancel().
+  - Colors and font sizes always go through Config.get_color(slot, fallback) /
+    Config.get_font_size(slot); hard-coded hex is forbidden. Add new theme colors to
+    sdk.ini [Theme].
+
+# ============================================================================
+# 1. Source code and resources
+# ============================================================================
+source:
+  package_root: ULTIMA_SDK/
+  modules: |
+    ULTIMA_SDK/__init__.py   Public facade + __all__ contract + triggers I18n.init()
+    ULTIMA_SDK/logger.py     Pure logging (headless-capable); LogSignal, log_*, loguru sink
+    ULTIMA_SDK/sys.py        Paths / Config / DataManager / Assets / I18n / CrashHook / Task system
+    ULTIMA_SDK/ui.py         All themed Qt widgets + i18n bindings
+    ULTIMA_SDK/demo.py       End-to-end smoke test: python -m ULTIMA_SDK.demo
+  bundled_resources: |
+    ULTIMA_SDK/config/sdk.ini          SDK's own config (auto-filled from _DEFAULTS on first access)
+    ULTIMA_SDK/assets/icon/*.svg       icon_close/mini/pause/play/reset/setting/stop/yes/no
+    ULTIMA_SDK/assets/sound/*.wav      slip/picked/notify/beep (used by WheelSelector)
+    ULTIMA_SDK/assets/Graphic/*.png    logo_dark / logo_light
+    ULTIMA_SDK/logs/crash_YYYYMMDD.log Written when install_crash_hook(write_file=True)
+
+# ============================================================================
+# 2. Install & integration
+# ============================================================================
+install:
+  python: ">=3.10"
+  required: [PyQt6, loguru]
+  optional: |
+    pandas    parquet/xlsx/csv
+    pyyaml    yaml/yml
+    tomli     reading toml on Python<3.11
+    tomli_w   writing toml
+  steps: |
+    1. cp -r ULTIMA_SDK <project_root>/    # Sibling of main.py
+    2. pip install PyQt6 loguru
+    3. At entry point use: from ULTIMA_SDK import ...
+  side_effects_on_import: |
+    - Installs the loguru terminal sink (with \r single-line progress mode)
+    - Registers all built-in DataManager handlers
+    - Calls I18n.init(); creates sdk.ini on demand and fills missing sections/keys
+    - Does NOT install the crash hook, does NOT create QApplication, does NOT start
+      TasksManager (trigger these manually as needed)
+
+# ============================================================================
+# 3. Public import cheatsheet (use: from ULTIMA_SDK import ...)
+# ============================================================================
+public_api:
+  logger: |
+    flags:    DEBUG_FLAG, INFO_FLAG
+    classes:  LogSignal, LoguruHandler
+    funcs:    log, log_info, log_success, log_warning, log_error, log_debug
+              install_loguru_bridge        # Idempotent; once installed, log_* renders twice
+              set_debug_flag, get_debug_flag, set_info_flag, get_info_flag
+  sys_infra: |
+    classes:  Paths, Config, CrashHook
+    funcs:    install_crash_hook, uninstall_crash_hook
+    alias:    config == Config
+  data_io: |
+    classes:  DataManager
+    funcs:    load_data, read_data, save_data, up_data, get_data_value
+  assets: |
+    classes:  Assets
+  i18n: |
+    classes:  I18n
+    funcs:    tr
+  tasks: |
+    enums:    TaskStatus
+    excs:     TaskCancelledException
+    classes:  TaskSignal, Task, TaskWorker, TaskSlot, TasksManager
+    funcs:    get_tasks_manager, get_task_signal, set_max_slots
+  ui: |
+    threads:    TyperThread
+    bindings:   I18nLabel, I18nButton, i18n_bind
+    widgets:    SwitchButton, CmdLogWidget, LaviLabel, LaviButton, LaviProgressBar,
+                LaviComboBox, SettingConfirm, TitleGroupBox, WheelSelector,
+                SliderSwitch, TagInput, CheckboxItem
+    factories:  setButton, setText, setComboBox, setTitleGroupBox, setWheelSelector,
+                setSliderSwitch, setTagInput, setCheckboxItem
+
+# ============================================================================
+# 4. Paths: SDK-internal paths (class, all relative to SDK_ROOT)
+# ============================================================================
+paths:
+  constants: |
+    SDK_ROOT     ULTIMA_SDK/
+    CONFIG_DIR   ULTIMA_SDK/config/
+    LOGS_DIR     ULTIMA_SDK/logs/
+    ASSETS_DIR   ULTIMA_SDK/assets/
+    SDK_INI      ULTIMA_SDK/config/sdk.ini
+  classmethods: |
+    resolve_under_sdk_root(raw, fallback) -> Path
+        # Absolute paths pass through; empty string returns fallback;
+        # relative paths are resolved against SDK_ROOT
+    get_logs_dir() -> Path
+        # Reads [Resources].logs_dir; falls back to LOGS_DIR if empty
+    get_assets_dirs() -> List[Path]
+        # External assets_dir first, bundled ASSETS_DIR second; external takes priority
+  agent_note: |
+    Paths.get_logs_dir / get_assets_dirs read sdk.ini directly (bypassing Config).
+    This is to break the import-time cycle in logger — keep as-is, do NOT "fix" it
+    to go through Config.
+
+# ============================================================================
+# 5. Config: sole entry point for sdk.ini reads/writes
+# ============================================================================
+config:
+  classmethods: |
+    get_value(section, key, fallback=None, value_type=str) -> Any
+        # value_type ∈ {str, int, float, bool}; empty string treated as unset → fallback
+    set_value(section, key, value)
+        # Atomic write, persisted immediately
+    get_color(slot, fallback="#000000") -> str
+        # = get_value("Theme", slot, fallback)
+    get_font_size(slot, fallback_size=12) -> int
+        # = get_value("Font", slot, fallback_size, int)
+  module_aliases: |
+    Top-level shortcuts (from ULTIMA_SDK import ...):
+      get_value     == Config.get_value
+      set_value     == Config.set_value
+      get_color     == Config.get_color
+      get_font_size == Config.get_font_size
+
+  sdk_ini_schema: |
+    [Theme]   Missing keys are auto-filled from _DEFAULTS
+      text     main_t1, main_t2, main_c1, main_c2, sub_t1, sub_t2,
+               hightlight, safe_zone, danger_zone
+      cards    bg_1, bg_2, row_1, row_2, btn_1, btn_2,
+               hover_1, hover_2, checked_1, checked_2,
+               border_1, border_2, spec_cmd
+      states   hightlight_hover, safe_zone_hover, danger_zone_hover,
+               hightlight_checked, safe_zone_checked, danger_zone_checked
+      misc     misc_1..4, theme_1, theme_2
+
+    [Font]
+      family       Microsoft YaHei
+      sizes        size_mini, size_small, size_normal, size_large
+
+    [SwitchButton]
+      width, height, slider_margin, animation_duration
+
+    [System]   CmdLogWidget dual-toggle persistence
+      cmd_log_debug, cmd_log_info
+
+    [Localisation]
+      dir          Default "../localisation", relative to SDK_ROOT
+      lang         Default "EN"
+
+    [Resources]   Empty → use bundled; relative paths resolve under SDK_ROOT
+      assets_dir, logs_dir
+
+# ============================================================================
+# 6. DataManager: generic thread-safe file I/O (classmethod API, no instantiation)
+# ============================================================================
+data_manager:
+  api: |
+    load(path, *, force_reload=False, format=None, **kw) -> Any
+        # Read disk into cache (returns cached on hit). force_reload forces a re-read.
+    read(path, *, format=None) -> Any
+        # Read from cache; auto-loads on miss.
+    write(path, value, *, format=None, **kw) -> bool
+        # Whole-file write + cache refresh; returns False on failure and calls log_error.
+    get(path, *keys, fallback=None, value_type=None, format=None) -> Any
+        # INI:        get(p, section, key, value_type=int, fallback=...)
+        # dict-like:  get(p, "a", "b", "c") or get(p, "a.b.c")
+        # No keys:    returns the whole value; with keys, missing path → fallback
+    update(path, *, section=None, key=None, value=None,
+           data=None, merge=True, format=None, **kw) -> bool
+        # INI:    update(p, section=, key=, value=) or update(p, data={sec:{k:v}})
+        # dict:   update(p, key=, value=) or update(p, data={...}, merge=True/False)
+        # Other formats (DataFrame/text/bytes) must use write()
+    clear(path=None)                   # Clear a single file's cache or the whole cache
+    reload_all()                        # Force re-read of all cached files
+    register_handler(ext, handler)      # ext can be ".foo" / "foo" / iterable
+
+  handlers_matrix: |
+    .ini / .cfg                                             ConfigParser (strict=False)
+    .json                                                   dict / list / any (indent=2, ensure_ascii=False)
+    .yaml / .yml                                            dict (lazy import pyyaml)
+    .toml                                                   dict (read via stdlib tomllib or tomli; write via tomli_w)
+    .pkl / .pickle                                          any Python object (HIGHEST_PROTOCOL)
+    .txt / .md / .log / .xml / .urdf / .xacro / .svg /
+       .html / .htm                                         str
+    .parquet / .xlsx / .csv                                 pandas.DataFrame (lazy; reads return .copy())
+    Other extensions                                        bytes (catch-all _BytesHandler)
+
+  atomic_write: |
+    Every write uses a temp file (.{name}.{uuid}.tmp) + os.replace; atomic within the same volume.
+    Internal helper: _atomic_write(path, write_fn) — custom handlers should also use it.
+    Note: os.replace is only atomic within the same volume; source and target must share a drive letter.
+
+  module_aliases: |
+    Top-level shortcuts:
+      load_data       == DataManager.load
+      read_data       == DataManager.read
+      save_data       == DataManager.write
+      up_data         == DataManager.update
+      get_data_value  == DataManager.get   # Note: get_value is reserved by Config
+
+# ============================================================================
+# 7. Assets: resource lookup (external + bundled, external takes priority)
+# ============================================================================
+assets:
+  api: |
+    search_dirs() -> List[Path]
+        # [external assets_dir, bundled ASSETS_DIR]
+    find(rel) -> Optional[Path]
+        # Any relative or absolute path
+    find_icon(name) -> Optional[Path]
+        # stem ("icon_close") / relative ("icon/foo.png") / absolute path are all accepted
+    list_icons() -> List[str]
+        # All available stems (external overrides bundled with same name)
+  icon_extensions: [.svg, .png, .ico]   # find_icon probe order
+  builtin_icon_stems: |
+    icon_close, icon_mini, icon_pause, icon_play, icon_reset, icon_setting,
+    icon_stop, icon_yes, icon_no
+  external_setup: |
+    sdk.ini [Resources].assets_dir = "../assets"   # Project-specific assets dir, external priority
+
+# ============================================================================
+# 8. I18n: three-tier fallback (current language → EN → default arg)
+# ============================================================================
+i18n:
+  api: |
+    init()                                      # Auto-called on SDK import; idempotent
+    tr(key, default="") -> str                  # Top-level alias == I18n.tr
+    set_language(lang)                          # Loads file → writes back to sdk.ini → emits language_changed
+    get_language() -> str
+    available_languages() -> List[str]          # Scans *.txt under [Localisation].dir
+    export_template(lang=None, merge=True) -> Path
+        # Collects every (key, default) seen via tr() and writes them to {lang}.txt
+        # merge=True only appends missing entries; False rewrites everything
+    registered_keys() -> Dict[str, str]         # Copy of all observed (key, default) pairs
+  base_lang: EN
+  signal: language_changed(str)                 # Auto-wired by i18n_bind / I18nLabel / I18nButton
+  file_format: |
+    # localisation/EN.txt (INI format but with .txt extension)
+    [app]
+    title = My App
+    [console]
+    title = Console
+  key_convention: "section.option"              # If contains '.', auto-splits section; otherwise goes under [default]
+
+# ============================================================================
+# 9. CrashHook: uncaught exception routing
+# ============================================================================
+crash_hook:
+  api: |
+    install(write_file=True)        # Takes over sys.excepthook + threading.excepthook
+    uninstall()
+  aliases: [install_crash_hook, uninstall_crash_hook]
+  behavior: |
+    - Uncaught exception → log_error + optional write to LOGS_DIR/crash_YYYYMMDD.log
+    - KeyboardInterrupt is delegated to the original hook (preserves Ctrl+C exit)
+    - install is idempotent; to change options, uninstall first
+
+# ============================================================================
+# 10. Task system: N-slot concurrency + FIFO queue
+# ============================================================================
+tasks:
+  TaskStatus: [PENDING, RUNNING, COMPLETED, FAILED, CANCELLED]
+  TaskCancelledException: After cancel(), sleep()/check_cancelled() raises this
+
+  TaskSignal: |
+    QObject singleton, broadcasts across threads. All signals:
+      progress_updated(slot: int, ratio: float, text: str)
+      status_changed(slot: int, task_id: str, status: str)
+          # status ∈ {running, completed, failed, cancelled}
+      notify_requested(title: str, message: str, type: str)
+      input_requested(req_id: str, title: str, message: str,
+                      input_type: str, options: list)
+      input_response(req_id: str, response: object)
+      task_finished(task_id: str, success: bool, result: object)
+      slot_released(slot: int)
+      file_select_requested(req_id: str, title: str, filter: str)
+      file_select_response(req_id: str, paths: list)
+    input_types: confirm | input | choice
+
+  Task: |
+    ABC; subclasses must implement run().
+
+    ctor:
+      Task(name="Task")
+
+    must_override:
+      run() -> Any                                # Return value → task.result
+
+    progress:
+      set_progress(ratio: float, text="")         # Updates the UI slot progress bar only
+      progress_line(ratio, text="", bar_width=30) # UI slot + cmd single-line progress (single-owner)
+
+    logging (auto-prefixed with [self.name]):
+      log(text, level="info")
+      log_info / log_success / log_warning / log_error
+
+    interactive (blocks waiting on main thread; cancel wakes the call and returns None):
+      notify(title, message, notify_type="info")
+      confirm(message, title="Confirm") -> bool
+      input_text(prompt, title="Input") -> Optional[str]
+      input_choice(prompt, options: List[str], title="Select") -> Optional[int]
+
+    control:
+      cancel()                                    # Sets _cancelled, wakes input_condition
+      check_cancelled()                           # Raises TaskCancelledException
+      sleep(seconds)                              # 100ms-step interruptible; must be used in run() instead of time.sleep
+
+    fields:
+      id, name, status, progress, result, error
+
+  internal_classes: |
+    TaskWorker(QThread)        # One thread per task; releases cmd progress ownership in finally
+    TaskSlot(index, signal)    # execute(task, on_finished_callback)
+
+  TasksManager: |
+    Singleton.
+    DEFAULT_SLOTS = 4
+    HARD_MAX = 16
+
+    api:
+      submit(task) -> task_id          # Starts immediately if a slot is free; otherwise FIFO-enqueues
+      cancel(task_id) -> bool          # Dequeues if queued; calls task.cancel() if running
+      get_task(task_id) -> Optional[Task]
+      get_slot_status() -> List[Dict]  # {index, busy, task_id, task_name, progress}
+      configure(max_slots) -> bool     # Returns True only when all slots are idle and the queue is empty
+
+    helpers:
+      get_tasks_manager()
+      get_task_signal()
+      set_max_slots(n)                 # == manager.configure(n)
+
+  invariant_cmd_progress: |
+    Globally only one task may own the cmd console's single-line progress bar
+    (_claim_cmd_progress / _release_cmd_progress).
+    Other concurrent tasks calling progress_line still update the graphic progress
+    bar (ratio is correctly refreshed) but do not write to the cmd console.
+    When ratio>=1.0, the owner writes the final line with wrap=True and releases;
+    TaskWorker.finally also releases as a safety net.
+    ⇒ Seeing only one progress bar in the cmd console under concurrent tasks is
+    expected behavior.
+
+# ============================================================================
+# 11. UI: themed widget family (every factory returns an instance with QSS + i18n attached)
+# ============================================================================
+ui:
+  theme_lifecycle: |
+    User edits sdk.ini [Theme] → iterate all widgets and call .refresh_style() →
+    Config.get_color is re-read.
+    All widgets expose refresh_style(); new widgets must implement it.
+
+  i18n_bindings: |
+    i18n_bind(widget, setter, key, default="")
+        # Calls setter once immediately, then attaches I18n.language_changed for auto re-translate
+        # Example: i18n_bind(window, "setWindowTitle", "app.title", default="My App")
+    I18nLabel(key, default="", parent=None)     # QLabel subclass, auto re-translates
+    I18nButton(key, default="", parent=None)    # QPushButton subclass, auto re-translates
+
+  TyperThread: |
+    TyperThread(text, interval=30)              # QThread; emits char_ready(str) per character
+    methods: run, stop
+    signals: char_ready(str), finished()
+
+  SwitchButton: |
+    SwitchButton(parent=None, checked=False)    # Two-state gradient switch
+    api:    isChecked / setChecked(b, animated=True) / toggle / set_colors / refresh_style
+    signal: toggled(bool)
+    reads:  [SwitchButton] section + Theme(btn_1, theme_2, sub_t1, alt_t1)
+
+  CmdLogWidget: |
+    CmdLogWidget(parent=None)                   # Built-in cmd console; auto-wired to LogSignal
+    features:
+      - DEBUG/INFO dual toggles, persisted to [System].cmd_log_debug / cmd_log_info
+      - Toggling re-renders the last 5000 history entries (HISTORY_LIMIT, drops oldest 1/4)
+      - wrap=False progress lines overwrite in place; only wrap=True lines enter history
+      - 5 color levels (debug #8B8B8B / info #FFFFFF / success #00D26A
+                       / warning #FFC107 / error #FF6B6B)
+      - Line format: [HH:MM:SS] [LEVEL] text
+    methods: clear, refresh_style
+
+  LaviLabel / setText: |
+    LaviLabel(id, *, default="", kind="title"|"content",
+              font=None, color=None, size=None, parent=None)
+    setText(id, *, default="", kind="title", font=None, color=None,
+            size=None, parent=None) -> LaviLabel
+
+    kind_map:
+      title    → main_t1 + size_large
+      content  → main_c1 + size_normal
+    note: When id="", i18n_bind is skipped and only default is shown (suitable for dynamic text)
+
+  LaviButton / setButton: |
+    LaviButton(id, *, default="", kind, spec, icon=None, overrides=None,
+               checkable=False, disabled=False, icon_only=False,
+               width=None, height=None, parent=None)
+
+    setButton(id, width, height, *,
+              kind="normal", spec="none",
+              icon=None, default="",
+              font_color=None, border_color=None, bg_color=None,
+              hover_color=None, hover_fg_color=None,
+              checked_color=None, checked_fg_color=None,
+              checkable=False, disabled=False, icon_only=False,
+              parent=None) -> LaviButton
+
+    kinds:    normal | border | light          # Three base styles for bg/border
+    specs:    none | notice | save | danger    # Semantic role; non-none uses bold font + spec colors
+    icon:     Assets.find_icon → stem ("icon_play") / relative / absolute all work
+    icon_only=True: Skips i18n text binding, pure icon button (id only acts as i18n key placeholder)
+    Override priority: explicit color args > spec colors > kind defaults
+
+  LaviProgressBar: |
+    LaviProgressBar(task_key="", *, default_name="Task",
+                    total=100, slot_idx=None, parent=None)
+
+    layout:  "Task: [bar] NN% | current/total | Status"
+    states:  idle | running | pause | success | failed | cancelled
+    fill_colors:
+      running           → hightlight
+      success           → safe_zone
+      failed/cancelled  → danger_zone
+      pause             → sub_t1
+    api:
+      set_total(n) / set_progress(current=, ratio=) / set_state(state) / reset()
+      set_task_name(key, default="") / bind_slot(slot_idx) / refresh_style()
+    auto_binding:
+      Once slot_idx is set, auto-subscribes to progress_updated / status_changed / slot_released
+    The cancelled state automatically falls back to idle after 1s
+
+  LaviComboBox / setComboBox: |
+    LaviComboBox(items, *, hightlight=False, parent=None)             # Read-only combo box
+    setComboBox(items, *, width=None, height=None,
+                hightlight=False, parent=None) -> LaviComboBox
+
+    items:    [str | (key, default)]   # str doubles as both key and default
+    api:      currentKey() / setItems(items) / refresh_style()
+    note:     editable=True has been removed (focus-stealing issues)
+
+  SettingConfirm: |
+    SettingConfirm(size=20, parent=None)        # Confirm/Cancel paired-icon button group
+    signals: clicked(bool), confirmed(), cancelled()
+    api:     refresh_style()
+
+  TitleGroupBox / setTitleGroupBox: |
+    TitleGroupBox(id, *, default="", parent=None)               # Themed QGroupBox + i18n title
+    setTitleGroupBox(id, *, default="", parent=None) -> TitleGroupBox
+    note: When id="", uses static default as the title
+    Usage: attach content yourself with QVBoxLayout(group), etc.
+
+  WheelSelector / setWheelSelector: |
+    WheelSelector(items, *, visible_count=5, radius=100,
+                  font_size=None, i18n=False, parent=None)
+
+    items shapes:
+      str                     Single line
+      (key, default)          With i18n=True single line; with i18n=False interpreted as (main, sub) two lines
+      [main_spec, sub_spec]   Explicit two lines (avoids ambiguity in i18n mode)
+    signals:
+      currentIndexChanged(idx: int, raw: str)   # raw=key (i18n) / default (non-i18n)
+      item_activated(idx: int, raw: str)        # Fired when clicking the current item
+    api:
+      setItems / currentIndex / currentText / currentDisplay
+      setCurrentIndex / selectNext / selectPrev
+    sound: Auto-plays assets/sound/slip.wav (QtMultimedia optional; silent if missing)
+
+  SliderSwitch / setSliderSwitch: |
+    SliderSwitch(options, *, height=44, min_segment_width=84,
+                 font_size=None, animation_ms=180, parent=None)
+
+    options:  [str | (key, default)]
+    signal:   current_changed(idx: int, key: str)
+    api:
+      currentIndex / currentKey / currentText
+      setCurrentIndex(i, animated=True, emit=True)
+      setCurrentKey(key, ...) / set_options / setHeight / refresh_style
+
+  TagInput / setTagInput: |
+    TagInput(*, mode="input"|"select", options=None,
+             placeholder_key="", placeholder="Type and press Enter",
+             font_size=None, parent=None)
+
+    modes:
+      input   QLineEdit; Enter appends; Backspace on empty input removes the last tag
+      select  QComboBox; selecting auto-appends
+    signal:   changed()
+    api:      get_values / set_values / add_value / clear / has_values / refresh_style
+
+  CheckboxItem / setCheckboxItem: |
+    CheckboxItem(id, *, default="", checked=False,
+                 font_size=None, parent=None)
+
+    signal:   toggled(bool)
+    api:      isChecked / setChecked / toggle / setTitle / refresh_style
+    note:     When id="", uses static default as the title
+
+# ============================================================================
+# 12. Gotchas (agent must avoid)
+# ============================================================================
+gotchas: |
+  - only_top_level_import:
+      Always: from ULTIMA_SDK import X. Private module names (sys/ui/logger) are not part of the contract.
+
+  - paths_are_absolute:
+      Paths.SDK_ROOT is anchored to __file__ and is independent of cwd.
+      Do NOT chdir before/after import expecting relative paths to behave consistently.
+
+  - dataframe_returns_copy:
+      DataManager.read/load returns .copy() for DataFrames; to persist changes you must call write()/update().
+
+  - update_typed_only:
+      update() supports only INI and dict-like; DataFrame/text/bytes must use write().
+
+  - get_value_naming:
+      Top-level get_value == Config.get_value (INI-only);
+      DataManager.get is exposed as get_data_value.
+
+  - must_use_self_sleep:
+      In Task.run, use self.sleep(s) for blocking; time.sleep is non-interruptible and breaks cancel.
+
+  - cmd_progress_single_owner:
+      Under concurrent tasks, only one writes to the cmd single-line progress bar; others only refresh
+      graphic bars — this is by design, not a bug.
+
+  - tasks_configure_when_idle:
+      TasksManager.configure(n) returns True only when all slots are idle and the queue is empty;
+      otherwise returns False.
+
+  - loguru_bridge_doubles:
+      After install_loguru_bridge, log_* renders twice (emit + loguru re-injection);
+      do NOT install unless mirroring a third-party logger.
+
+  - i18n_init_on_import:
+      Importing ULTIMA_SDK calls I18n.init(); the first call creates sdk.ini and fills it in.
+
+  - assets_external_first:
+      [Resources].assets_dir is unioned with the bundled assets/, external takes priority;
+      external entries with the same name override bundled ones.
+
+  - localisation_dir_default:
+      [Localisation].dir defaults to "../localisation", relative to SDK_ROOT;
+      override with an absolute path or one relative to SDK_ROOT.
+
+  - ini_strict_false:
+      All ini reads use strict=False; duplicate keys within a section do not raise.
+
+  - atomic_write_same_volume:
+      os.replace is only atomic within the same volume; source and target must share a drive letter.
+
+  - theme_slots_not_hardcode:
+      Always go through Config.get_color/get_font_size for colors and font sizes; add new theme colors
+      as [Theme] slots.
+
+  - paths_get_logs_bypass_config:
+      Paths.get_logs_dir / get_assets_dirs intentionally bypass Config (logger import-time cycle);
+      do NOT "fix" it.
+
+# ============================================================================
+# 13. Recipes (copy-paste)
+# ============================================================================
+recipes:
+
+  app_bootstrap: |
+    import sys
+    from PyQt6.QtWidgets import QApplication
+    from ULTIMA_SDK import install_crash_hook, set_max_slots, log_info
+
+    install_crash_hook()                     # Child-thread exceptions → log_error + crash log
+    app = QApplication(sys.argv)
+    set_max_slots(4)                         # Default 4, HARD_MAX=16
+    win = MainWindow(); win.show()
+    log_info("Startup complete")
+    sys.exit(app.exec())
+
+  custom_task: |
+    from ULTIMA_SDK import Task
+
+    class FetchTask(Task):
+        def __init__(self, urls):
+            super().__init__(f"Fetch {len(urls)} items")
+            self.urls = urls
+
+        def run(self):
+            results = []
+            n = len(self.urls)
+            for i, url in enumerate(self.urls):
+                self.check_cancelled()
+                self.progress_line((i + 1) / n, f"{i+1}/{n} {url}")
+                results.append(self._fetch(url))
+                self.sleep(0.05)             # Interruptible blocking
+            return results
+
+  submit_and_track: |
+    from ULTIMA_SDK import get_tasks_manager, get_task_signal, log_success
+
+    mgr = get_tasks_manager()
+    tid = mgr.submit(FetchTask(urls))
+
+    def _on_finish(task_id, success, result):
+        if task_id == tid:
+            log_success(f"Done: {len(result)} items" if success else "Failed")
+    get_task_signal().task_finished.connect(_on_finish)
+
+  read_write_app_config: |
+    # Business config goes through DataManager (decoupled from the SDK's own sdk.ini)
+    from ULTIMA_SDK import save_data, read_data, get_data_value, up_data
+    save_data("config/app.json", {"window": {"w": 1280, "h": 800}})
+    cfg = read_data("config/app.json")
+    w   = get_data_value("config/app.json", "window", "w",
+                         fallback=1024, value_type=int)
+    up_data("config/app.json", data={"window": {"w": 1600}})    # merge=True
+
+  custom_handler: |
+    import json
+    from ULTIMA_SDK import DataManager
+
+    class JsonlHandler:
+        def read(self, path, **kw):
+            if not path.exists():
+                return []
+            return [json.loads(l) for l in
+                    path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        def write(self, path, value, **kw):
+            from ULTIMA_SDK.sys import _atomic_write   # Internal helper
+            _atomic_write(path, lambda tmp: tmp.write_text(
+                "\n".join(json.dumps(x, ensure_ascii=False) for x in value),
+                encoding="utf-8"))
+
+    DataManager.register_handler(".jsonl", JsonlHandler())
+
+  themed_button: |
+    from ULTIMA_SDK import setButton
+    btn = setButton("btn.save", 100, 32,
+                    kind="normal", spec="save",
+                    icon="icon_play", default="Save")
+    grid.addWidget(btn, row, col)
+
+  i18n_label_and_switch: |
+    from ULTIMA_SDK import I18n, I18nLabel, i18n_bind, log_info
+
+    title = I18nLabel("app.title", default="My App")
+    i18n_bind(window, "setWindowTitle", "app.title", default="My App")
+
+    I18n.set_language("ZH")                  # Fires language_changed → all bound widgets re-translate
+    log_info(f"available: {I18n.available_languages()}")
+    I18n.export_template("ZH", merge=True)   # Dump every tr() key collected from code into ZH.txt
+
+  resolve_asset: |
+    from ULTIMA_SDK import Assets
+    p = Assets.find_icon("icon_play")        # → ULTIMA_SDK/assets/icon/icon_play.svg
+    p = Assets.find("sound/notify.wav")      # Any relative path
+    # sdk.ini [Resources].assets_dir = "../assets"  # Project-specific external dir, external priority
+
+  cross_thread_log: |
+    import threading
+    from ULTIMA_SDK import log_info
+    # log_* internally goes through LogSignal.pyqtSignal, auto-marshalled to the main thread for rendering
+    threading.Thread(target=lambda: log_info("from worker"), daemon=True).start()
+
+  progress_bar_widget: |
+    # Auto-renders live progress for slot 0 (driven by TaskSignal)
+    from ULTIMA_SDK import LaviProgressBar
+    bar = LaviProgressBar(task_key="task.fetch", default_name="Fetch",
+                          total=100, slot_idx=0)
+    layout.addWidget(bar)
+
+# ============================================================================
+# 14. Recommended project layout
+# ============================================================================
+layout: |
+  project_root/
+    ULTIMA_SDK/                     # Drop in the SDK as-is; do NOT mix business code into the SDK
+    config/                       # Project's own config (decoupled from the SDK)
+      app.json
+    localisation/                 # Default [Localisation].dir = "../localisation"
+      EN.txt
+      ZH.txt
+    assets/                       # Project-specific resources (external dir, external takes priority)
+      icon/
+      sound/
+    Data/                         # Business data: parquet/xlsx/csv etc.
+    core/                         # Business modules (workspace pattern: ws_*.py)
+    main.py                       # Entry point; standard bootstrap in recipes.app_bootstrap
+    requirements.txt              # PyQt6 + loguru required; pandas/pyyaml as needed
+
+# ============================================================================
+# 15. Modifying the SDK vs extending in the project
+# ============================================================================
+extension_policy:
+  prefer_project_extension: |
+    - Business Task subclasses
+    - Project-specific theme colors / font sizes (Config.get_color, add new slots if needed)
+    - Custom file formats (DataManager.register_handler at project entry)
+    - Translation entries (maintain ../localisation/{LANG}.txt directly or auto-collect via export_template)
+
+  modify_sdk_when: |
+    - A new atomic-write format shared across projects → goes into sys.py
+    - A general-purpose widget shared across projects that depends on sdk.ini schema →
+      goes into ui.py and extends [Theme] / [Font]
+    - Cross-project changes to crash-routing strategy → goes into sys.CrashHook
+
+  do_not: |
+    - Inject business paths into Paths (Paths only serves the SDK itself)
+    - Import business modules from inside the SDK
+    - Break the __all__ contract (external code uses: from ULTIMA_SDK import)
+    - Bypass DataManager / Config / Paths by calling open() / Path() / ConfigParser() directly
+
+# ============================================================================
+# 16. Verification / self-check
+# ============================================================================
+verify:
+  smoke_test: |
+    python -m ULTIMA_SDK.demo
+    # Expected:
+    # - 5 tasks, max_slots=2 → 2 run first, 3 are queued
+    # - Only one task's single-line progress moves in the cmd console (other tasks still update graphic bars)
+    # - The top LaviProgressBar shows concurrent task progress and state transitions
+    # - CrashTask raises ZeroDivisionError but the app does not exit (CrashHook routes to log_error)
+    # - Toggling DEBUG to OFF: all debug lines disappear from the cmd console immediately; toggling back ON restores them
+    # - Switching the language combo: every i18n_bind widget re-translates in sync
+
+  syntax_check: |
+    python -m py_compile ULTIMA_SDK/__init__.py ULTIMA_SDK/logger.py \
+                         ULTIMA_SDK/sys.py ULTIMA_SDK/ui.py ULTIMA_SDK/demo.py
