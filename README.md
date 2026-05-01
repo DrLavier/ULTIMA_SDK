@@ -1,6 +1,6 @@
 # ULTIMA_SDK
 
-A reusable PyQt6 application SDK / 一个可复用的 PyQt6 应用 SDK
+A reusable PyQt6 application SDK / 基于 PyQt6 的通用应用 SDK
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](requirements.txt)
@@ -10,29 +10,19 @@ A reusable PyQt6 application SDK / 一个可复用的 PyQt6 应用 SDK
 
 ## 简介 / Introduction
 
-**中文**
+ULTIMA_SDK 是我用 Claude 从过往个人项目中整理出的一份通用 SDK 框架，
+可在不同的 Python 环境下被生产项目快速复用部署。
+ULTIMA_SDK is a general SDK framework that I distilled from my prior personal
+projects using Claude Code. The goal is fast reuse across different Python
+environments and get a working frontend out of the box.
 
-ULTIMA_SDK 是我使用 Claude 从过往个人项目中沉淀、整理出的一份通用 SDK 框架，
-目标是在不同的 Python 环境下被生产项目快速复用，做到「拷过去就能用」的前端 UI 部署体验。
+核心特性 / Highlights：
 
-核心特性：
-
-- **快速前端 UI 部署**：开箱即用的主题化 Qt 控件族（按钮 / 标签 / 进度条 / 下拉框 / 滑动开关 / 滚轮选择器 / 标签输入 / 复选项 / 分组框）。
+- **前端 UI 预制菜**：开箱即用的主题化 Qt 控件族（按钮 / 标签 / 进度条 / 下拉框 / 滑动开关 / 滚轮选择器 / 标签输入 / 复选项 / 分组框）。
 - **多槽位线程管理器**：内置 `TasksManager`，支持 N 路并发槽位、FIFO 队列、可中断 `sleep`、跨线程进度上报与统一取消。
 - **二进制文件安全读写**：`DataManager` 统一封装 INI/JSON/YAML/TOML/pickle/parquet/xlsx/csv/text/bytes 的原子读写，避免半写文件损坏。
 - **I18n 多语种支持**：三级回退（当前语种 → 英文 base → key 字面量），并支持 **导出 key 列表** 用于交付翻译。
-- **崩溃钩子 / 日志中枢**：`install_crash_hook` 接管子线程异常；`LogSignal` 跨线程汇聚日志到 `CmdLogWidget`。
-
-授权协议：**Apache License 2.0**。
-
-**English**
-
-ULTIMA_SDK is a general-purpose SDK framework that I distilled from my prior personal
-projects with the help of Claude. The goal is fast reuse across different Python
-environments — drop the package into any production project and get a working frontend
-out of the box.
-
-Highlights:
+- **Crash hook / 内嵌 Log**：`install_crash_hook` 接管子线程异常；`LogSignal` 跨线程汇聚日志到 `CmdLogWidget`。
 
 - **Fast frontend deployment** — a themed family of Qt widgets (button, label, progress
   bar, combo box, slider switch, wheel selector, tag input, checkbox item, group box).
@@ -46,7 +36,7 @@ Highlights:
 - **Crash hook & log hub** — `install_crash_hook` captures uncaught exceptions on worker
   threads; `LogSignal` funnels cross-thread logs into `CmdLogWidget`.
 
-License: **Apache License 2.0**.
+## 授权协议 / License: **Apache License 2.0**.
 
 ---
 
@@ -129,17 +119,13 @@ ULTIMA_SDK/
 
 ## 内置资产声明 / Bundled Assets Statement
 
-**中文**
-
 - **音效（`assets/sound/`）** — `beep.wav` / `notify.wav` / `picked.wav` / `slip.wav`
-  均为**可商用**音效（royalty-free），可随本 SDK 一同分发与商用。
-- **图标（`assets/icon/`）** — 全部 SVG 图标均由本人**自绘**，随 SDK 以 Apache 2.0 协议授权。
-
-**English**
+  均为**我自制 & 可商用**音效（royalty-free），可随本 SDK 一同分发。
+- **图标（`assets/icon/`）** — 全部 SVG 图标均由我**自绘**，随 SDK 以 Apache 2.0 协议授权。
 
 - **Sound effects (`assets/sound/`)** — `beep.wav`, `notify.wav`, `picked.wav`, `slip.wav`
-  are **royalty-free** and may be redistributed and used commercially together with this SDK.
-- **Icons (`assets/icon/`)** — all SVG icons are **hand-drawn by the author** and
+  are **made by me & royalty-free** and may be redistributed and used commercially together with this SDK.
+- **Icons (`assets/icon/`)** — all SVG icons are **drawn by the me** and
   released under Apache 2.0 along with the SDK.
 
 ---
