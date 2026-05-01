@@ -38,6 +38,8 @@ environments and get a working frontend out of the box.
 
 ## 授权协议 / License: **Apache License 2.0**.
 
+![demo](./demo.jpg)
+
 ---
 
 ## Requirements
