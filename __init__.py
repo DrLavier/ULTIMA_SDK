@@ -1,4 +1,4 @@
-"""LAVI_SDK：从 ULTIMA 抽出的可复用基础设施。
+"""ULTIMA_SDK：从 ULTIMA 抽出的可复用基础设施。
 
 仅 3 个内部模块，各自一类职责：
 
@@ -8,7 +8,7 @@
 
 最小用法：
 
-    from LAVI_SDK import (
+    from ULTIMA_SDK import (
         log_info, install_crash_hook,
         get_tasks_manager, Task, CmdLogWidget,
     )
@@ -103,7 +103,7 @@ from .ui import (
     setCheckboxItem,
 )
 
-# 兼容别名：`from LAVI_SDK import config` 仍可用作 Config
+# 兼容别名：`from ULTIMA_SDK import config` 仍可用作 Config
 config = Config
 
 # 导入 SDK 时初始化 i18n（读 sdk.ini 的 [Localisation].lang，加载默认语种 + EN base）
