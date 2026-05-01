@@ -36,8 +36,6 @@ environments and get a working frontend out of the box.
 - **Crash hook & log hub** — `install_crash_hook` captures uncaught exceptions on worker
   threads; `LogSignal` funnels cross-thread logs into `CmdLogWidget`.
 
-## 授权协议 / License: **Apache License 2.0**.
-
 ![demo](./demo.jpg)
 
 ---
